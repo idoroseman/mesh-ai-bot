@@ -1,0 +1,16 @@
+[Unit]
+Description=MeshCore AI bot
+After=network-online.target bluetooth.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+SupplementaryGroups=dialout
+WorkingDirectory=/home/admin/mesh-ai-bot
+ExecStart=/home/admin/mesh-ai-bot/.venv/bin/python -u bot_meshcore.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

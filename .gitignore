@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+._*
+
+# Runtime output
+repeater_telemetry.jsonl
+
+# Local secrets (repeater password, hosts)
+config.json
