@@ -1,0 +1,33 @@
+{
+  "ollama_host": "http://localhost:11434",
+  "model_name": "gemma4:latest",
+
+  "meshcore_port": "/dev/ttyACM0",
+  "meshcore_ble": "",
+  "meshcore_debug": false,
+  "meshcore_map_upload": false,
+  "meshcore_repeater_password": "",
+  "meshcore_probe_repeaters": [],
+  "meshcore_probe_interval_seconds": 3600,
+  "meshcore_probe_file": "repeater_telemetry.jsonl",
+
+  "meshtastic_port": "/dev/ttyUSB0",
+  "meshtastic_ble": "",
+
+  "max_message_bytes": 140,
+  "max_reply_parts": 3,
+  "part_delay_seconds": 3,
+
+  "bot_language": "English",
+  "bot_mentions": ["@bot", " bot "],
+  "error_reply": "The bot is online, but could not generate a reply right now.",
+
+  "meshcore_background_path": "background_meshcore.md",
+  "meshtastic_background_path": "background_meshtastic.md",
+  "max_background_chars": 12000,
+
+  "max_tool_rounds": 3,
+  "max_tool_result_chars": 3000,
+  "max_listed_contacts": 25,
+  "max_network_events": 100
+}
