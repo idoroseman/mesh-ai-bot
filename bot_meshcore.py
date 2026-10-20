@@ -15,6 +15,8 @@ MESHCORE_PORT = CONFIG["meshcore_port"]  # e.g. /dev/cu.usbmodem1101 or COM16
 # The radio's Bluetooth address, or part of its name such as "MeshCore-Bot"; when set, it is used instead of the serial port
 MESHCORE_BLE = CONFIG.get("meshcore_ble", "")
 MESHCORE_DEBUG = CONFIG["meshcore_debug"]
+# The bot answers every message on these channels (a leading # and the case are ignored); elsewhere only a mention
+MESHCORE_CHANNELS = CONFIG.get("meshcore_channels", ["#bot"])
 # Upload the repeaters the radio hears to map.meshcore.io; needs the radio to allow exporting its private key
 MESHCORE_MAP_UPLOAD = CONFIG.get("meshcore_map_upload", False)
 
@@ -78,10 +80,15 @@ def parse_channel_text(text: str) -> tuple[str, str]:
     return "", text.strip()
 
 
+def normalize_channel(name: str) -> str:
+    return name.strip().lstrip("#").lower()
+
+
 def should_answer(text: str, channel_name: str, is_dm: bool, bot_name: str = "") -> bool:
+    """Direct messages and the channels listed in the config are always answered; elsewhere only a mention is."""
     if not text or not text.strip():
         return False
-    if is_dm or "bot" in channel_name.lower():
+    if is_dm or normalize_channel(channel_name) in {normalize_channel(c) for c in MESHCORE_CHANNELS}:
         return True
     lowered = f" {text.lower()} "
     if bot_name and f"@[{bot_name.lower()}]" in lowered:

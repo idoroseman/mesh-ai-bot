@@ -125,7 +125,7 @@ class MeshTools:
         self.started = time.time()
 
     def record(self, kind: str, detail: str = "") -> None:
-        print(f"Event {kind}: {detail}")
+        # print(f"Event {kind} {detail}")
         self.events.append((time.time(), kind, detail))
 
     def background(self) -> str:

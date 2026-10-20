@@ -202,12 +202,17 @@ class TextHelpersTest(unittest.TestCase):
         self.assertEqual(bot_meshcore.parse_channel_text("no sender"), ("", "no sender"))
 
     def test_should_answer(self):
-        self.assertTrue(bot_meshcore.should_answer("hi", "", True))
-        self.assertTrue(bot_meshcore.should_answer("hi", "Bot-IL", False))
-        self.assertTrue(bot_meshcore.should_answer("hey @bot status", "Public", False))
-        self.assertTrue(bot_meshcore.should_answer("שלום בוט מה נשמע", "Public", False))
-        self.assertTrue(bot_meshcore.should_answer("@[ClubBot] hi", "Public", False, "ClubBot"))
-        self.assertFalse(bot_meshcore.should_answer("hello everyone", "Public", False, "ClubBot"))
+        with mock.patch.object(bot_meshcore, "MESHCORE_CHANNELS", ["#bot"]):
+            self.assertTrue(bot_meshcore.should_answer("hi", "", True))
+            self.assertTrue(bot_meshcore.should_answer("hi", "#bot", False))
+            self.assertTrue(bot_meshcore.should_answer("hi", "Bot", False))
+            self.assertTrue(bot_meshcore.should_answer("hey @bot status", "Public", False))
+            self.assertTrue(bot_meshcore.should_answer("@בוט מה נשמע", "Public", False))
+            self.assertTrue(bot_meshcore.should_answer("@[ClubBot] hi", "Public", False, "ClubBot"))
+            self.assertFalse(bot_meshcore.should_answer("hello everyone", "Public", False, "ClubBot"))
+            self.assertFalse(bot_meshcore.should_answer("is this bot working", "Public", False))
+            self.assertFalse(bot_meshcore.should_answer("hi", "#bot-il", False))
+            self.assertFalse(bot_meshcore.should_answer("hi", "", False))
         self.assertFalse(bot_meshcore.should_answer("   ", "", True))
 
     def test_format_age(self):
@@ -582,6 +587,7 @@ class BotEndToEndTest(QuietTestCase):
             mock.patch.object(bot_meshcore, "MESHCORE_PORT", "/dev/fake"),
             mock.patch.object(bot_meshcore, "MESHCORE_BLE", ""),
             mock.patch.object(bot_meshcore, "MESHCORE_MAP_UPLOAD", False),
+            mock.patch.object(bot_meshcore, "MESHCORE_CHANNELS", ["bot-il"]),
             mock.patch.object(bot_meshcore, "PART_DELAY_SECONDS", 0),
             mock.patch.object(bot_meshcore, "probe_forever", lambda meshcore: asyncio.sleep(3600)),
             mock.patch.object(bot_meshcore.MeshCore, "create_serial", create_serial),
@@ -627,7 +633,7 @@ class BotEndToEndTest(QuietTestCase):
         self.assertEqual(self.model.requests, [])
         self.assertEqual(self.mesh.commands.channel_messages, [])
 
-    async def test_answers_a_mention_on_a_public_channel(self):
+    async def test_answers_a_mention_on_a_channel_that_is_not_listed(self):
         self.model.script = [answer("hi")]
         await self.mesh.emit(EventType.CHANNEL_MSG_RECV, {"channel_idx": 0, "text": "4X1ABC: @bot hello"})
         await self.wait_for(lambda: self.mesh.commands.channel_messages)

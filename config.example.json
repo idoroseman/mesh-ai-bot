@@ -6,6 +6,7 @@
   "meshcore_ble": "",
   "meshcore_debug": false,
   "meshcore_map_upload": false,
+  "meshcore_channels": ["#bot"],
   "meshcore_repeater_password": "",
   "meshcore_probe_repeaters": [],
   "meshcore_probe_interval_seconds": 3600,
@@ -19,7 +20,7 @@
   "part_delay_seconds": 3,
 
   "bot_language": "English",
-  "bot_mentions": ["@bot", " bot "],
+  "bot_mentions": ["@bot", "@בוט"],
   "error_reply": "The bot is online, but could not generate a reply right now.",
 
   "meshcore_background_path": "background_meshcore.md",
