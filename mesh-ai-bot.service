@@ -11,6 +11,9 @@ WorkingDirectory=/home/admin/mesh-ai-bot
 ExecStart=/home/admin/mesh-ai-bot/.venv/bin/python -u bot_meshcore.py
 Restart=always
 RestartSec=10
+TimeoutStopSec=20
+# The radio accepts one BLE connection; drop it if the bot died without disconnecting (the leading "-" ignores errors)
+ExecStopPost=-/usr/bin/bluetoothctl disconnect 48:CA:43:3E:9E:3D
 
 [Install]
 WantedBy=multi-user.target

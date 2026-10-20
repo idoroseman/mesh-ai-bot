@@ -1,5 +1,6 @@
 import asyncio
 import json
+import signal
 import time
 from typing import Any, Awaitable, Callable, Dict, List
 
@@ -124,6 +125,13 @@ async def main() -> int:
     if not MESHCORE_BLE and not MESHCORE_PORT:
         print("Set meshcore_ble or meshcore_port in config.json to reach your MeshCore companion radio.")
         return 1
+
+    # systemd stops the service with SIGTERM; cancel main so the radio is disconnected cleanly
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
+    except (NotImplementedError, RuntimeError):
+        pass
 
     link = f"Bluetooth ({MESHCORE_BLE})" if MESHCORE_BLE else MESHCORE_PORT
     try:
