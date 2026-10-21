@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import signal
 import time
 from typing import Any, Awaitable, Callable, Dict, List
@@ -15,7 +16,7 @@ MESHCORE_PORT = CONFIG["meshcore_port"]  # e.g. /dev/cu.usbmodem1101 or COM16
 # The radio's Bluetooth address, or part of its name such as "MeshCore-Bot"; when set, it is used instead of the serial port
 MESHCORE_BLE = CONFIG.get("meshcore_ble", "")
 MESHCORE_DEBUG = CONFIG["meshcore_debug"]
-# The bot answers every message on these channels (a leading # and the case are ignored); elsewhere only a mention
+# The bot answers these channels unless another user is mentioned; elsewhere only a bot mention
 MESHCORE_CHANNELS = CONFIG.get("meshcore_channels", ["#bot"])
 # Upload the repeaters the radio hears to map.meshcore.io; needs the radio to allow exporting its private key
 MESHCORE_MAP_UPLOAD = CONFIG.get("meshcore_map_upload", False)
@@ -85,11 +86,17 @@ def normalize_channel(name: str) -> str:
 
 
 def should_answer(text: str, channel_name: str, is_dm: bool, bot_name: str = "") -> bool:
-    """Direct messages and the channels listed in the config are always answered; elsewhere only a mention is."""
+    """Answer DMs and monitored channels, except channel messages mentioning someone else."""
     if not text or not text.strip():
         return False
-    if is_dm or normalize_channel(channel_name) in {normalize_channel(c) for c in MESHCORE_CHANNELS}:
+    if is_dm:
         return True
+    if normalize_channel(channel_name) in {normalize_channel(c) for c in MESHCORE_CHANNELS}:
+        bot_names = {token.lower().removeprefix("@").strip("[]") for token in BOT_MENTIONS}
+        if bot_name:
+            bot_names.add(bot_name.lower())
+        mentions = re.findall(r"(?<![\w@])@(?:\[([^\]\r\n]+)\]|([\w!][\w-]*))", text)
+        return all((bracketed or plain).lower() in bot_names for bracketed, plain in mentions)
     lowered = f" {text.lower()} "
     if bot_name and f"@[{bot_name.lower()}]" in lowered:
         return True
@@ -176,6 +183,7 @@ async def main() -> int:
         tools.counters["messages_received"] += 1
 
         if sender == bot_name or not should_answer(text, channel, False, bot_name):
+            print(F"skipping")
             return
 
         # The radio prepends "<bot name>: " to every channel message it sends, and each part mentions the sender
@@ -204,6 +212,7 @@ async def main() -> int:
         tools.counters["messages_received"] += 1
 
         if not should_answer(text, "", True):
+            print(F"skipping")
             return
 
         metadata = {**msg, "user": sender, "channel": "direct"}

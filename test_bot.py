@@ -215,6 +215,16 @@ class TextHelpersTest(unittest.TestCase):
             self.assertFalse(bot_meshcore.should_answer("hi", "", False))
         self.assertFalse(bot_meshcore.should_answer("   ", "", True))
 
+    def test_monitored_channel_ignores_mentions_of_other_users(self):
+        with mock.patch.object(bot_meshcore, "MESHCORE_CHANNELS", ["#bot"]):
+            for text in ("@alice hello", "hello @[Alice Smith]", "@משה שלום", "@!0a0b0c0d hi", "@botman hi", "@bot ask @alice"):
+                with self.subTest(text=text):
+                    self.assertFalse(bot_meshcore.should_answer(text, "#bot", False, "ClubBot"))
+            for text in ("hello everyone", "@bot hi", "@בוט שלום", "@[ClubBot] hi", "@clubbot hi", "email alice@example.com"):
+                with self.subTest(text=text):
+                    self.assertTrue(bot_meshcore.should_answer(text, "#bot", False, "ClubBot"))
+            self.assertTrue(bot_meshcore.should_answer("ask @alice", "", True, "ClubBot"))
+
     def test_format_age(self):
         self.assertEqual(format_age(-5), "0s")
         self.assertEqual(format_age(59), "59s")
@@ -629,6 +639,12 @@ class BotEndToEndTest(QuietTestCase):
 
     async def test_ignores_public_channel_without_a_mention(self):
         await self.mesh.emit(EventType.CHANNEL_MSG_RECV, {"channel_idx": 0, "text": "4X1ABC: hello all"})
+        await self.idle()
+        self.assertEqual(self.model.requests, [])
+        self.assertEqual(self.mesh.commands.channel_messages, [])
+
+    async def test_ignores_other_user_mentions_on_monitored_channel(self):
+        await self.mesh.emit(EventType.CHANNEL_MSG_RECV, {"channel_idx": 1, "text": "4X1ABC: @[Other User] hello"})
         await self.idle()
         self.assertEqual(self.model.requests, [])
         self.assertEqual(self.mesh.commands.channel_messages, [])
