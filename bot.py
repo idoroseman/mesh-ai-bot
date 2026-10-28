@@ -92,6 +92,7 @@ def split_for_mesh(text: str, max_bytes: int, max_parts: int) -> List[str]:
         parts[-1] = last.rstrip() + "…"
     return parts
 
+
 def chat_with_tools(messages: List[Any], tools: Any, metadata: Dict[str, Any]) -> str:
     """Let the model look up live mesh data through tool calls before it writes the reply."""
     if tools.model_supports_tools:
@@ -115,14 +116,14 @@ def chat_with_tools(messages: List[Any], tools: Any, metadata: Dict[str, Any]) -
     if not tools.model_supports_tools:
         # Without tool calling, hand the model a snapshot of everything it could have looked up
         names = [spec["function"]["name"] for spec in tools.specs]
-        snapshot = [f"{name}: { tools.call(name, {}, metadata)}" for name in names]
+        snapshot = [f"{name}: {tools.call(name, {}, metadata)}" for name in names]
         messages[0]["content"] += "\n\nLive mesh data:\n" + "\n".join(snapshot)
     response = ollama_client.chat(model=MODEL_NAME, messages=messages)
     return response.message.content or ""
 
 
 def generate_bot_reply(
-    text: str, metadata: Dict[str, Any], max_bytes: int, max_reply_parts: int, tools: Any, 
+    text: str, metadata: Dict[str, Any], max_bytes: int, max_reply_parts: int, tools: Any
 ) -> List[str]:
     """Answer one user message; the reply comes back as parts that each fit in one mesh message."""
     # Hebrew takes 2 bytes per character

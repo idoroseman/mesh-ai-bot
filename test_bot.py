@@ -19,6 +19,8 @@ from meshtastic.protobuf import channel_pb2, config_pb2
 import bot
 import bot_meshcore
 import bot_meshtastic
+import map_upload
+import mqtt_observer
 import tools
 import tools_meshcore
 from tools import dump_bounded, format_age
@@ -530,17 +532,17 @@ class MapUploadTest(unittest.IsolatedAsyncioTestCase):
         digest[0] &= 248
         digest[31] = (digest[31] & 127) | 64
         self.private_key = bytes(digest)
-        self.public_key = tools_meshcore.ed25519_public_key(self.private_key)
+        self.public_key = map_upload.ed25519_public_key(self.private_key)
         self.struct = struct
         self.uploads = []
-        self.uploader = tools_meshcore.MapUploader(
+        self.uploader = map_upload.MapUploader(
             {"radio_freq": 869.618, "radio_bw": 62.5, "radio_sf": 8, "radio_cr": 8}, self.private_key, self.uploads.append
         )
 
     def advert(self, node_type=2, timestamp=1790000000, name="Carmel RPT", tamper=False):
         app = bytes([0x80 | node_type]) + name.encode()
         stamp = self.struct.pack("<I", timestamp)
-        signature = tools_meshcore.ed25519_sign(self.private_key, self.public_key + stamp + app)
+        signature = map_upload.ed25519_sign(self.private_key, self.public_key + stamp + app)
         if tamper:
             app = app[:-1] + b"X"
         return (bytes([0x11, 0x00]) + self.public_key + stamp + signature + app).hex()
@@ -549,10 +551,10 @@ class MapUploadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.public_key.hex(), "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
         )
-        signature = tools_meshcore.ed25519_sign(self.private_key, b"")
+        signature = map_upload.ed25519_sign(self.private_key, b"")
         self.assertTrue(signature.hex().startswith("e5564300c360ac729086e2cc806e828a"))
-        self.assertTrue(tools_meshcore.ed25519_verify(self.public_key, b"", signature))
-        self.assertFalse(tools_meshcore.ed25519_verify(self.public_key, b"x", signature))
+        self.assertTrue(map_upload.ed25519_verify(self.public_key, b"", signature))
+        self.assertFalse(map_upload.ed25519_verify(self.public_key, b"x", signature))
 
     async def test_uploads_a_signed_repeater_advert(self):
         self.assertEqual(await self.uploader.handle_packet(self.advert()), "Carmel RPT")
@@ -564,7 +566,7 @@ class MapUploadTest(unittest.IsolatedAsyncioTestCase):
         import hashlib
 
         self.assertTrue(
-            tools_meshcore.ed25519_verify(
+            map_upload.ed25519_verify(
                 self.public_key, hashlib.sha256(body["data"].encode()).digest(), bytes.fromhex(body["signature"])
             )
         )
@@ -583,6 +585,84 @@ class MapUploadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.uploads), 2)
 
 
+class FakeMqttClient:
+    def __init__(self):
+        self.connected = True
+        self.published = []
+
+    def is_connected(self):
+        return self.connected
+
+    def publish(self, topic, payload, retain=False):
+        self.published.append((topic, json.loads(payload), retain))
+
+
+class MqttObserverTest(unittest.TestCase):
+    def setUp(self):
+        import hashlib
+
+        digest = bytearray(hashlib.sha512(MapUploadTest.SEED).digest())
+        digest[0] &= 248
+        digest[31] = (digest[31] & 127) | 64
+        self.private_key = bytes(digest)
+        self.public_key = map_upload.ed25519_public_key(self.private_key)
+        self.client = FakeMqttClient()
+        with mock.patch.object(mqtt_observer, "MQTT_IATA", "TLV"):
+            self.observer = mqtt_observer.MqttObserver(
+                FakeMeshCore().self_info, {"model": "Heltec V3", "ver": "1.14"}, self.private_key, self.client
+            )
+
+    def test_auth_token_is_a_jwt_signed_by_the_radio_key(self):
+        import base64
+
+        token = mqtt_observer.create_auth_token(self.private_key, "mqtt.meshmapper.net", now=1790000000)
+        header, payload, signature = token.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["publicKey"], self.public_key.hex().upper())
+        self.assertEqual(claims["aud"], "mqtt.meshmapper.net")
+        self.assertEqual(claims["exp"] - claims["iat"], 3600)
+        self.assertTrue(
+            map_upload.ed25519_verify(self.public_key, f"{header}.{payload}".encode(), bytes.fromhex(signature))
+        )
+
+    def test_packet_message_matches_meshcoretomqtt(self):
+        # Direct text message (type 2) over two one-byte hops
+        raw = bytes([0x0A, 0x02, 0xBB, 0xAA]) + b"hello"
+        message = mqtt_observer.packet_message({"payload": raw.hex(), "snr": 9.75, "rssi": -80}, "ClubBot", "ABCD")
+        self.assertEqual(message["origin_id"], "ABCD")
+        self.assertEqual(message["route"], "D")
+        self.assertEqual(message["packet_type"], "2")
+        self.assertEqual(message["len"], "9")
+        self.assertEqual(message["payload_len"], "5")
+        self.assertEqual(message["path"], "BB -> AA")
+        self.assertEqual((message["SNR"], message["RSSI"]), ("9", "-80"))
+        self.assertEqual(message["raw"], raw.hex().upper())
+        import hashlib
+
+        self.assertEqual(message["hash"], hashlib.sha256(b"\x02hello").digest()[:8].hex().upper())
+
+    def test_flood_packets_have_no_path_and_garbage_is_skipped(self):
+        message = mqtt_observer.packet_message({"payload": "1101bb" + "00" * 10}, "ClubBot", "ABCD")
+        self.assertEqual(message["route"], "F")
+        self.assertNotIn("path", message)
+        self.assertIsNone(mqtt_observer.packet_message({"payload": "0a05bb"}, "ClubBot", "ABCD"))
+        self.assertIsNone(mqtt_observer.packet_message({"payload": "zz"}, "ClubBot", "ABCD"))
+
+    def test_publishes_packets_under_the_region_and_key(self):
+        self.assertTrue(self.observer.handle_packet({"payload": "1101bb" + "00" * 10, "snr": 5, "rssi": -90}))
+        topic, message, retain = self.client.published[0]
+        self.assertEqual(topic, f"meshcore/TLV/{self.public_key.hex().upper()}/packets")
+        self.assertEqual(message["origin"], "ClubBot")
+        self.assertFalse(retain)
+        self.client.connected = False
+        self.assertFalse(self.observer.handle_packet({"payload": "1101bb" + "00" * 10}))
+
+    def test_status_names_the_radio(self):
+        status = self.observer.status_message("online")
+        self.assertEqual(status["radio"], "869.618,62.5,8,8")
+        self.assertEqual((status["model"], status["firmware_version"]), ("Heltec V3", "1.14"))
+
+
 class BotEndToEndTest(QuietTestCase):
     """Runs main() itself with the radio and the model replaced by fakes."""
 
@@ -597,6 +677,7 @@ class BotEndToEndTest(QuietTestCase):
             mock.patch.object(bot_meshcore, "MESHCORE_PORT", "/dev/fake"),
             mock.patch.object(bot_meshcore, "MESHCORE_BLE", ""),
             mock.patch.object(bot_meshcore, "MESHCORE_MAP_UPLOAD", False),
+            mock.patch.object(bot_meshcore, "MESHCORE_MQTT_OBSERVER", False),
             mock.patch.object(bot_meshcore, "MESHCORE_CHANNELS", ["bot-il"]),
             mock.patch.object(bot_meshcore, "PART_DELAY_SECONDS", 0),
             mock.patch.object(bot_meshcore, "probe_forever", lambda meshcore: asyncio.sleep(3600)),

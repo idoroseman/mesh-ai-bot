@@ -11,16 +11,20 @@ An AI assistant for LoRa mesh networks. It listens on a MeshCore (or Meshtastic)
 - MeshCore only:
   - Sends an advert at startup.
   - Uploads the repeaters, rooms and sensors it hears to [map.meshcore.io](https://map.meshcore.io), signed with the radio's key (`meshcore_map_upload`).
+  - Acts as a [MeshMapper](https://wiki.meshmapper.net/mqtt-main/) MQTT observer, publishing every packet it hears to `meshcore/<IATA>/<pubkey>/packets` (`meshcore_mqtt_observer`).
   - Probes repeaters every hour and appends status and telemetry to a JSONL file.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `bot_meshcore.py` | MeshCore entry point, repeater probe |
+| `bot_meshcore.py` | MeshCore entry point |
+| `repeater_telemetry.py` | Periodic repeater status/telemetry probe, CSV logging |
+| `map_upload.py` | Signed advert uploads to map.meshcore.io |
+| `mqtt_observer.py` | MeshMapper MQTT observer (packets and status) |
 | `bot_meshtastic.py` | Meshtastic entry point |
 | `bot.py` | System prompt, model calls, reply splitting |
-| `tools.py`, `tools_meshcore.py`, `tools_meshtastic.py` | Model tools, map uploader |
+| `tools.py`, `tools_meshcore.py`, `tools_meshtastic.py` | Model tools |
 | `config.example.json` | Template for `config.json` |
 | `mesh-ai-bot.service` | systemd unit for a Raspberry Pi |
 | `test_bot.py` | Unit tests with a fake radio and model |
@@ -29,7 +33,7 @@ An AI assistant for LoRa mesh networks. It listens on a MeshCore (or Meshtastic)
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install meshcore meshtastic ollama pyserial
+.venv/bin/pip install meshcore meshtastic ollama pyserial paho-mqtt
 cp config.example.json config.json
 ```
 
@@ -44,6 +48,7 @@ All settings live in `config.json`, which is git-ignored because it can hold a p
 | `ollama_host`, `model_name` | Ollama server and model; the model should support tool calling |
 | `meshcore_port` / `meshcore_ble` | Serial port or Bluetooth name of the companion radio; Bluetooth wins when set |
 | `meshcore_map_upload` | Upload heard repeaters to the MeshCore map; needs a radio that exports its private key |
+| `meshcore_mqtt_observer`, `meshcore_mqtt_iata` | Publish heard packets to MeshMapper's broker under this region code; needs the key export. `meshcore_mqtt_server` / `meshcore_mqtt_port` override `mqtt.meshmapper.net:443` |
 | `meshcore_repeater_password` | Guest or admin password used to log in to repeaters before probing |
 | `meshcore_probe_repeaters` | Repeater names (or parts) to probe; empty means every known repeater |
 | `meshcore_probe_interval_seconds`, `meshcore_probe_file` | Probe period (default 3600) and output file |

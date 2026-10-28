@@ -8,7 +8,32 @@ from meshtastic.mesh_interface import MeshInterface
 from meshtastic.protobuf import channel_pb2
 
 from config import CONFIG
-from tools import TOOL_SPECS, MeshTools, format_age
+from tools import MAX_LISTED_CONTACTS, TOOL_SPECS, MeshTools, format_age
+
+# A node with the default role announces no role at all
+DEFAULT_ROLE = "CLIENT"
+# The contact types the shared tools speak of, by the Meshtastic roles they cover; repeater comes first so
+# that the old ROUTER_CLIENT role counts as a repeater
+KIND_ROLES = {
+    "repeater": ("router", "repeater"),
+    "companion": ("client", "tracker", "tak"),
+    "sensor": ("sensor",),
+}
+KIND_DESCRIPTION = "Only this type: companion, repeater or sensor, or a Meshtastic role such as router or client_mute"
+
+# The shared descriptions speak of MeshCore fields and contact types that Meshtastic does not have
+DESCRIPTIONS = {
+    "link_test": (
+        "Call this when the user sends a test or בדיקה to check that the bot hears them. Returns how "
+        "the user's message was received: sender, channel, hops, route, SNR and RSSI, when available."
+    ),
+    "list_contacts": (
+        "Who is on the mesh network: the nodes (stations, repeaters / ממסרים, sensors) the bot's radio "
+        "knows, most recently heard first, with type, role, hardware, hop count, time since last heard and "
+        "location, plus totals per type. Use this for any question about which nodes or repeaters exist, "
+        "how many there are, or about one specific node."
+    ),
+}
 
 
 def meshtastic_specs() -> List[Dict[str, Any]]:
@@ -22,12 +47,12 @@ def meshtastic_specs() -> List[Dict[str, Any]]:
 
 
 def node_id_of(packet: Dict[str, Any]) -> str:
+    """The sender's node id, e.g. '!0a0b0c0d'."""
     # fromId is missing on the first packet from a node the radio does not know yet
     return f"!{packet.get('from', 0):08x}"
 
 
 def node_role(info: Dict[str, Any]) -> str:
-    # A node with the default role announces no role at all
     return info.get("role", DEFAULT_ROLE).lower()
 
 
@@ -39,6 +64,7 @@ def node_kind(info: Dict[str, Any]) -> str:
 class MeshtasticTools(MeshTools):
     """Live mesh data the model can look up to answer questions about the network and the bot."""
 
+    specs = meshtastic_specs()
     background_path = CONFIG["meshtastic_background_path"]
 
     def __init__(self, meshtastic: MeshInterface, model_name: str):

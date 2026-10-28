@@ -1,15 +1,16 @@
 import asyncio
-import json
 import re
 import signal
-import time
 from typing import Any, Awaitable, Callable, Dict, List
 
 from meshcore import EventType, MeshCore
 
 from bot import BOT_MENTIONS, MODEL_NAME, byte_len, generate_bot_reply
 from config import CONFIG
-from tools_meshcore import MeshCoreTools, MapUploader
+from map_upload import create_map_uploader
+from mqtt_observer import create_mqtt_observer
+from repeater_telemetry import probe_forever
+from tools_meshcore import MeshCoreTools
 
 # All settings live in config.json
 MESHCORE_PORT = CONFIG["meshcore_port"]  # e.g. /dev/cu.usbmodem1101 or COM16
@@ -20,57 +21,13 @@ MESHCORE_DEBUG = CONFIG["meshcore_debug"]
 MESHCORE_CHANNELS = CONFIG.get("meshcore_channels", ["#bot"])
 # Upload the repeaters the radio hears to map.meshcore.io; needs the radio to allow exporting its private key
 MESHCORE_MAP_UPLOAD = CONFIG.get("meshcore_map_upload", False)
+# Report the packets the radio hears to MeshMapper's MQTT broker as an observer; also needs the key export
+MESHCORE_MQTT_OBSERVER = CONFIG.get("meshcore_mqtt_observer", False)
 
 # MeshCore text payloads are limited to ~160 bytes, and Hebrew takes 2 bytes per character.
 MAX_MESSAGE_BYTES = CONFIG["max_message_bytes"]
 MAX_REPLY_PARTS = CONFIG["max_reply_parts"]
 PART_DELAY_SECONDS = CONFIG["part_delay_seconds"]
-
-
-# Repeater names (or parts of names) to probe; empty means every repeater the radio knows
-PROBE_REPEATERS: List[str] = CONFIG.get("meshcore_probe_repeaters", [])
-PROBE_INTERVAL_SECONDS = CONFIG.get("meshcore_probe_interval_seconds", 3600)
-PROBE_FILE = CONFIG.get("meshcore_probe_file", "repeater_telemetry.jsonl")
-# Repeaters answer status requests only after a login; empty means a guest login
-REPEATER_PASSWORD = CONFIG.get("meshcore_repeater_password", "")
-
-
-def select_repeaters(contacts: Dict[str, Dict[str, Any]], names: List[str]) -> List[Dict[str, Any]]:
-    wanted = [n.lower() for n in names]
-    return [
-        c
-        for c in contacts.values()
-        if c.get("type") == 2 and (not wanted or any(n in c.get("adv_name", "").lower() for n in wanted))
-    ]
-
-
-async def probe_repeater(meshcore: MeshCore, contact: Dict[str, Any]) -> Dict[str, Any]:
-    commands = meshcore.commands
-    record: Dict[str, Any] = {"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "repeater": contact.get("adv_name", "")}
-    try:
-        login = await commands.send_login_sync(contact, REPEATER_PASSWORD)
-        record["logged_in"] = login is not None
-        record["status"] = await commands.req_status_sync(contact)
-        record["telemetry"] = await commands.req_telemetry_sync(contact)
-        if not record["status"] and not record["telemetry"]:
-            record["error"] = "no answer"
-    except Exception as exc:
-        record["error"] = repr(exc)
-    return record
-
-
-async def probe_forever(meshcore: MeshCore) -> None:
-    """Append one JSON line per repeater to PROBE_FILE every PROBE_INTERVAL_SECONDS."""
-    while True:
-        try:
-            for contact in select_repeaters(meshcore.contacts, PROBE_REPEATERS):
-                record = await probe_repeater(meshcore, contact)
-                print(f"Probed repeater {record['repeater']}: {record.get('error', 'ok')}")
-                with open(PROBE_FILE, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
-        except Exception as exc:
-            print(f"Repeater probe failed: {exc!r}")
-        await asyncio.sleep(PROBE_INTERVAL_SECONDS)
 
 
 def parse_channel_text(text: str) -> tuple[str, str]:
@@ -122,18 +79,6 @@ async def connect() -> MeshCore | None:
     return await MeshCore.create_serial(MESHCORE_PORT, debug=MESHCORE_DEBUG)
 
 
-async def create_map_uploader(meshcore: MeshCore) -> MapUploader | None:
-    result = await meshcore.commands.export_private_key()
-    if result.type != EventType.PRIVATE_KEY:
-        print(f"Map upload disabled, the radio would not export its key: {result.type}")
-        return None
-    uploader = MapUploader(meshcore.self_info, result.payload["private_key"])
-    if uploader.public_key.hex() != meshcore.self_info.get("public_key", uploader.public_key.hex()):
-        print("Map upload disabled, the exported key does not match the radio's public key")
-        return None
-    print("Uploading heard repeaters to map.meshcore.io")
-    return uploader
-
 
 async def main() -> int:
     if not MESHCORE_BLE and not MESHCORE_PORT:
@@ -169,10 +114,11 @@ async def main() -> int:
         print(f"Error advertising bot: {advert_result.payload}")
 
     map_uploader = await create_map_uploader(meshcore) if MESHCORE_MAP_UPLOAD else None
+    mqtt_observer = await create_mqtt_observer(meshcore) if MESHCORE_MQTT_OBSERVER else None
 
     tools = MeshCoreTools(meshcore, MODEL_NAME, asyncio.get_running_loop())
     reply_lock = asyncio.Lock()
-    tasks: set = set()
+    tasks: set[asyncio.Task] = set()
 
     async def answer_channel_message(msg: Dict[str, Any]) -> None:
         chan = msg.get("channel_idx")
@@ -183,7 +129,6 @@ async def main() -> int:
         tools.counters["messages_received"] += 1
 
         if sender == bot_name or not should_answer(text, channel, False, bot_name):
-            print(F"skipping")
             return
 
         # The radio prepends "<bot name>: " to every channel message it sends, and each part mentions the sender
@@ -212,7 +157,6 @@ async def main() -> int:
         tools.counters["messages_received"] += 1
 
         if not should_answer(text, "", True):
-            print(F"skipping")
             return
 
         metadata = {**msg, "user": sender, "channel": "direct"}
@@ -230,6 +174,12 @@ async def main() -> int:
         if name:
             print(f"Uploaded {name} to the map")
             tools.record("map upload", name)
+
+    async def observe_packet(event) -> None:
+        try:
+            mqtt_observer.handle_packet(event.payload or {})
+        except Exception as exc:
+            print(f"MQTT observer publish failed: {exc!r}")
 
     def spawn(handler: Callable[[Dict[str, Any]], Awaitable[None]]):
         # Reply in a background task, with the model in a worker thread, so the event loop stays free meanwhile
@@ -268,6 +218,8 @@ async def main() -> int:
     probe_task = asyncio.create_task(probe_forever(meshcore))
     if map_uploader:
         subscriptions.append(meshcore.subscribe(EventType.RX_LOG_DATA, upload_to_map))
+    if mqtt_observer:
+        subscriptions.append(meshcore.subscribe(EventType.RX_LOG_DATA, observe_packet))
 
     try:
         print("Listening...")
@@ -276,6 +228,8 @@ async def main() -> int:
             await asyncio.sleep(3600)
     finally:
         probe_task.cancel()
+        if mqtt_observer:
+            mqtt_observer.stop()
         for subscription in subscriptions:
             meshcore.unsubscribe(subscription)
         await meshcore.stop_auto_message_fetching()

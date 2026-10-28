@@ -6,6 +6,8 @@
   "meshcore_ble": "",
   "meshcore_debug": false,
   "meshcore_map_upload": false,
+  "meshcore_mqtt_observer": false,
+  "meshcore_mqtt_iata": "",
   "meshcore_channels": ["#bot"],
   "meshcore_repeater_password": "",
   "meshcore_probe_repeaters": [],

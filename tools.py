@@ -125,7 +125,6 @@ class MeshTools:
         self.started = time.time()
 
     def record(self, kind: str, detail: str = "") -> None:
-        # print(f"Event {kind} {detail}")
         self.events.append((time.time(), kind, detail))
 
     def background(self) -> str:
@@ -148,7 +147,6 @@ class MeshTools:
         recent = list(self.events)[-limit:][::-1]
         return [f"{format_age(now - when)} ago: {kind} {detail}".strip() for when, kind, detail in recent]
 
-
     @staticmethod
     def to_text(result: Any) -> str:
         return result if isinstance(result, str) else dump_bounded(result, MAX_TOOL_RESULT_CHARS)
@@ -166,14 +164,10 @@ class MeshTools:
 
     def call(self, name: str, arguments: Dict[str, Any], metadata: Dict[str, Any]) -> str:
         """Run one tool for the model."""
-        print(f"tool name: {name} args: {arguments}, meta:{metadata}")
         handler = self.find_handler(name, metadata)
         if handler is None:
             return f"Unknown tool: {name}"
         try:
-            rv = self.to_text(handler(**arguments))
-            print(f"tool retuen: {rv}")
-            return rv
+            return self.to_text(handler(**arguments))
         except Exception as exc:
-            print(f"tool error: {exc}")
             return f"Tool error: {exc}"

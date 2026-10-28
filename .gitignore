@@ -5,7 +5,9 @@ __pycache__/
 ._*
 
 # Runtime output
-repeater_telemetry.jsonl
+repeater_telemetry.json
+repeater_telemetry.csv
+probe_power.py
 
 # Local secrets (repeater password, hosts)
 config.json

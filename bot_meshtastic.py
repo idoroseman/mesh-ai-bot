@@ -1,13 +1,16 @@
 import time
-import meshtastic
+from typing import Any, Dict
+
+import meshtastic.ble_interface
 import meshtastic.serial_interface
 from google.protobuf.json_format import ParseDict
-from meshtastic.ble_interface import BLEInterface
+from meshtastic.mesh_interface import MeshInterface
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from pubsub import pub
 
+from bot import BOT_MENTIONS, MODEL_NAME, generate_bot_reply
 from config import CONFIG
-from bot import BOT_MENTIONS, MODEL_NAME, byte_len, generate_bot_reply
+from tools_meshtastic import MeshtasticTools, node_id_of
 
 MESHTASTIC_PORT = CONFIG["meshtastic_port"]  # e.g. /dev/cu.usbmodem1101 or COM16
 # The radio's Bluetooth name or address, e.g. "Meshtastic_6b4e"; when set, it is used instead of the serial port
@@ -17,104 +20,103 @@ MAX_MESSAGE_BYTES = CONFIG["max_message_bytes"]
 MAX_REPLY_PARTS = CONFIG["max_reply_parts"]
 PART_DELAY_SECONDS = CONFIG["part_delay_seconds"]
 
-from tools_meshtastic import MeshtasticTools
+# Set by main() once the radio is connected; the receive callback needs it
+tools: MeshtasticTools | None = None
 
 
-def mentions_bot(text, bot_id):
+def mentions_bot(text: str, bot_id: str) -> bool:
     """On a channel the bot only answers messages that call it, e.g. '@bot' or '@!e9d66b4e'."""
     lowered = f" {text.lower()} "
     # The Meshtastic apps write a mention as '@' followed by the node id
     return f"@{bot_id}" in lowered or any(token in lowered for token in BOT_MENTIONS)
 
 
-def on_receive_packet(packet, interface):
-    """Callback function triggered whenever a packet is received."""
-    global tools
+def on_receive_packet(packet: Dict[str, Any], interface: MeshInterface) -> None:
+    """Answer text messages sent to the bot directly, or mentioning it on the primary channel."""
     try:
-        # Check if the packet contains a text message
+        if packet.get("decoded", {}).get("portnum") != "TEXT_MESSAGE_APP":
+            return
         channel = packet.get("channel", 0)
-        sender_id = packet.get('fromId')
-        portnum = packet.get("decoded", {}).get("portnum")
-        from_node = packet.get("fromId", "?")
-
-        if portnum != 'TEXT_MESSAGE_APP':
-            return
-        print(f"💬 Processing TEXT_MESSAGE_APP on channel {channel}")
-        if channel != 0:
-            return
-        
-        # Avoid responding to our own messages or empty strings
-        if packet.get('from') == interface.myInfo.my_node_num:
+        my_num = interface.myInfo.my_node_num
+        # Only the primary channel, and never the bot's own messages
+        if channel != 0 or packet.get("from") == my_num:
             return
 
-        message_text = packet['decoded'].get('text', '')
+        text = packet["decoded"].get("text", "")
+        sender = tools.node_name(node_id_of(packet))
         # A message addressed to the bot's node is direct; anything else was sent to the channel
-        is_direct = packet.get('to') == interface.myInfo.my_node_num
-        bot_id = f"!{interface.myInfo.my_node_num:08x}"
-        if not is_direct and not mentions_bot(message_text, bot_id):
+        is_direct = packet.get("to") == my_num
+        channel_name = "direct" if is_direct else tools.channel_name(channel)
+        print(f"📥 Received on {channel_name} from {sender}: {text}")
+        # Who messages the bot privately is not shared with other users
+        if is_direct:
+            tools.record("direct message")
+        else:
+            tools.record("channel message", f"from {sender} on {channel_name}")
+        tools.counters["messages_received"] += 1
+
+        if not is_direct and not mentions_bot(text, f"!{my_num:08x}"):
             return
 
-        print(f"📥 Received from {sender_id}: {message_text}")
-
-        metadata = packet
+        metadata = {**packet, "user": sender, "channel": channel_name}
         # On the channel the reply starts with a mention of the sender, written like the apps do: '@!<node id>'
-        mention = "" if is_direct else f"@!{packet['from']:08x} "
-        ai_reply = generate_bot_reply(message_text, metadata, MAX_MESSAGE_BYTES- len(mention), MAX_REPLY_PARTS, tools)
-        for idx, part in enumerate(ai_reply):
+        mention = "" if is_direct else f"@{node_id_of(packet)} "
+        reply = generate_bot_reply(text, metadata, MAX_MESSAGE_BYTES - len(mention), MAX_REPLY_PARTS, tools)
+        for idx, part in enumerate(reply):
             if idx:
                 time.sleep(PART_DELAY_SECONDS)
             print(f"📤 Replying: {part}")
             if is_direct:
-                interface.sendText(text=part, destinationId=packet['from'])
+                interface.sendText(text=part, destinationId=packet["from"])
             else:
-                # Asked on the channel, so answer on the channel
                 interface.sendText(text=mention + part, channelIndex=channel)
-        
-    except Exception as e:
-        print(f"❌ Error processing packet: {e}")
+        tools.counters["replies_sent"] += 1
+    except Exception as exc:
+        print(f"❌ Error processing packet: {exc!r}")
 
 
-def main():
+def connect() -> MeshInterface:
+    """Connect to the radio over Bluetooth if a device is set, otherwise over the serial port."""
+    if MESHTASTIC_BLE:
+        print(f"🔌 Connecting to Meshtastic device {MESHTASTIC_BLE} over Bluetooth...")
+        return meshtastic.ble_interface.BLEInterface(MESHTASTIC_BLE)
+    print(f"🔌 Connecting to Meshtastic device on {MESHTASTIC_PORT}...")
+    return meshtastic.serial_interface.SerialInterface(devPath=MESHTASTIC_PORT)
+
+
+def announce(interface: MeshInterface, user: Dict[str, Any]) -> None:
+    """Broadcast the radio's node info right away, instead of waiting for its next periodic one."""
+    node_info = ParseDict({k: v for k, v in user.items() if k != "raw"}, mesh_pb2.User(), ignore_unknown_fields=True)
+    interface.sendData(node_info, portNum=portnums_pb2.PortNum.NODEINFO_APP)
+    print("📣 Node info broadcast sent.")
+
+
+def main() -> int:
     global tools
 
-    try:
-        interface = None
-        if MESHTASTIC_BLE:
-            print(f"🔌 Connecting to Meshtastic device {MESHTASTIC_BLE} over Bluetooth...")
-            interface = BLEInterface(MESHTASTIC_BLE)
-        elif MESHTASTIC_PORT:
-            print(f"🔌 Connecting to Meshtastic device on {MESHTASTIC_PORT}...")
-            interface = meshtastic.serial_interface.SerialInterface(devPath=MESHTASTIC_PORT)
-        else:
-            raise RuntimeError("No Meshtastic connection method specified.")
+    if not MESHTASTIC_BLE and not MESHTASTIC_PORT:
+        print("Set meshtastic_ble or meshtastic_port in config.json to reach your Meshtastic radio.")
+        return 1
 
+    interface = connect()
+    try:
         local_user = (interface.getMyNodeInfo() or {}).get("user", {})
         local_id = local_user.get("id") or f"!{interface.myInfo.my_node_num:08x}"
         print(f"📻 Local node: {local_user.get('longName', 'unknown')} ({local_id})")
-
-        # Announce the radio on the mesh right away, instead of waiting for its next periodic node info
         if local_user:
-            announcement = ParseDict(
-                {k: v for k, v in local_user.items() if k != "raw"}, mesh_pb2.User(), ignore_unknown_fields=True
-            )
-            interface.sendData(announcement, portNum=portnums_pb2.PortNum.NODEINFO_APP)
-            print("📣 Node info broadcast sent.")
+            announce(interface, local_user)
 
         tools = MeshtasticTools(interface, MODEL_NAME)
-
-        # Subscribe to incoming data packets
         pub.subscribe(on_receive_packet, "meshtastic.receive")
-        print("🟢 Bridge active. Listening for mesh messages... Press Ctrl+C to exit.")
-        
-        # Keep the main thread alive
+        print("🟢 Listening for mesh messages... Press Ctrl+C to exit.")
         while True:
             time.sleep(1)
-
     except KeyboardInterrupt:
-        print("\n🛑 Shutting down bridge...")
+        print("\n🛑 Shutting down...")
     finally:
-        if 'interface' in locals():
-            interface.close()
+        interface.close()
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
