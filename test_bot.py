@@ -21,6 +21,8 @@ import bot_meshcore
 import bot_meshtastic
 import map_upload
 import mqtt_observer
+import repeater_telemetry
+import status_server
 import tools
 import tools_meshcore
 from tools import dump_bounded, format_age
@@ -663,6 +665,127 @@ class MqttObserverTest(unittest.TestCase):
         self.assertEqual((status["model"], status["firmware_version"]), ("Heltec V3", "1.14"))
 
 
+class StatusServerTest(QuietTestCase):
+    async def asyncSetUp(self):
+        self.mesh = FakeMeshCore()
+        self.tools = MeshCoreTools(self.mesh, "test-model", asyncio.get_running_loop())
+        self.tools.counters["replies_sent"] = 3
+        self.tools.record("advert", "from <b>Carmel</b>")
+        self.extra = {"repeaters": [{"repeater": "Carmel RPT", "battery mV": "4069"}], "map_upload": {}}
+        telemetry = lambda: [{"name": "Carmel RPT", "points": [{"t": 1, "battery": 4069.0, "voltage": None, "temperature": 30.0}]}]
+        self.server = status_server.StatusServer(
+            self.tools, asyncio.get_running_loop(), lambda: self.extra, telemetry, "ClubBot"
+        )
+        self.client = self.server.app.test_client()
+
+    async def get(self, path):
+        # The page waits on the event loop for the radio, so it is fetched from a worker thread as Flask would
+        return await asyncio.to_thread(self.client.get, path)
+
+    async def text(self, path):
+        response = await self.get(path)
+        self.assertEqual(response.status_code, 200, path)
+        return response.get_data(as_text=True)
+
+    async def test_api_reports_health_events_and_extras(self):
+        body = (await self.get("/api/status")).get_json()
+        self.assertTrue(body["health"]["radio_connected"])
+        self.assertEqual(body["health"]["counters"], {"replies_sent": 3})
+        self.assertEqual(body["health"]["firmware"]["model"], "Heltec V3")
+        self.assertIn("advert from <b>Carmel</b>", body["events"][0])
+        self.assertEqual(body["extra"]["repeaters"][0]["battery mV"], "4069")
+
+    async def test_each_section_is_its_own_tab(self):
+        page = await self.text("/")
+        for tab in ("/bot", "/radio", "/repeaters", "/events", "/graphs"):
+            self.assertIn(f'href="{tab}"', page)
+        # Empty extras get no tab
+        self.assertNotIn('href="/map_upload"', page)
+        self.assertEqual((await self.get("/map_upload")).status_code, 404)
+        self.assertIn("replies sent", page)
+        self.assertIn("Heltec V3", await self.text("/radio"))
+        self.assertIn("Carmel RPT", await self.text("/repeaters"))
+        self.assertIn('aria-current="page">Events', await self.text("/events"))
+
+    async def test_events_tab_does_not_ask_the_radio(self):
+        async def broken():
+            raise AssertionError("radio queried")
+
+        self.tools.bot_health = broken
+        self.assertIn("advert from", await self.text("/events"))
+        self.assertIn("Carmel RPT", await self.text("/repeaters"))
+
+    async def test_page_escapes_names_heard_on_the_mesh(self):
+        page = await self.text("/events")
+        self.assertIn("&lt;b&gt;Carmel&lt;/b&gt;", page)
+        self.assertNotIn("<b>Carmel</b>", page)
+
+    async def test_shows_the_bot_when_the_radio_fails(self):
+        async def broken():
+            raise ConnectionError("radio gone")
+
+        self.tools.bot_health = broken
+        body = (await self.get("/api/status")).get_json()
+        self.assertEqual(body["health"]["counters"], {"replies_sent": 3})
+        self.assertIn("radio gone", body["health"]["error"])
+        self.assertIn("radio gone", await self.text("/"))
+        self.assertIn("Could not read the radio", await self.text("/radio"))
+
+    async def test_graphs_page_loads_the_telemetry(self):
+        page = await self.text("/graphs")
+        self.assertIn('data-source="/api/telemetry"', page)
+        self.assertIn("/static/graphs.js", page)
+        self.assertEqual((await self.get("/static/graphs.js")).status_code, 200)
+        body = (await self.get("/api/telemetry")).get_json()
+        self.assertEqual(body[0]["points"][0]["battery"], 4069.0)
+
+    async def test_no_graphs_tab_without_telemetry(self):
+        server = status_server.StatusServer(self.tools, asyncio.get_running_loop())
+        client = server.app.test_client()
+        self.assertNotIn('href="/graphs"', (await asyncio.to_thread(client.get, "/events")).get_data(as_text=True))
+        self.assertEqual((await asyncio.to_thread(client.get, "/api/telemetry")).status_code, 404)
+
+    async def test_serves_over_http_and_stops(self):
+        import urllib.request
+
+        self.server.start("127.0.0.1", 0)
+        url = f"http://127.0.0.1:{self.server.server.server_port}/api/status"
+        body = await asyncio.to_thread(lambda: json.loads(urllib.request.urlopen(url, timeout=5).read()))
+        self.assertEqual(body["health"]["model"], "test-model")
+        await asyncio.to_thread(self.server.stop)
+        self.assertFalse(self.server.thread.is_alive())
+
+
+class LatestRowsTest(unittest.TestCase):
+    def test_keeps_the_newest_probe_of_each_repeater(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "probe.csv")
+            repeater_telemetry.write_probe_row(path, {"time": "t1", "repeater": "B", "status": {"bat": 4000}})
+            repeater_telemetry.write_probe_row(path, {"time": "t2", "repeater": "A", "error": "no answer"})
+            repeater_telemetry.write_probe_row(path, {"time": "t3", "repeater": "B", "status": {"bat": 4100}})
+            rows = repeater_telemetry.latest_rows(path)
+        self.assertEqual([(r["repeater"], r["probed"]) for r in rows], [("A", "t2"), ("B", "t3")])
+        self.assertEqual(rows[1]["battery mV"], "4100")
+        self.assertEqual(rows[0]["error"], "no answer")
+        self.assertEqual(repeater_telemetry.latest_rows(os.path.join(folder, "missing.csv")), [])
+
+    def test_history_groups_readings_by_repeater(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "probe.csv")
+            repeater_telemetry.write_probe_row(path, {"time": "2026-10-28T10:00:00", "repeater": "B", "status": {"bat": 4000}})
+            repeater_telemetry.write_probe_row(path, {"time": "2026-10-28T09:00:00", "repeater": "B", "status": {"bat": 3990}})
+            repeater_telemetry.write_probe_row(path, {"time": "2026-10-28T10:00:00", "repeater": "A", "error": "no answer"})
+            repeater_telemetry.write_probe_row(
+                path,
+                {"time": "2026-10-28T11:00:00", "repeater": "C", "telemetry": [{"channel": 1, "type": "temperature", "value": 31.5}]},
+            )
+            series = repeater_telemetry.history(path)
+        self.assertEqual([s["name"] for s in series], ["B", "C"])
+        self.assertEqual([p["battery"] for p in series[0]["points"]], [3990.0, 4000.0])
+        self.assertLess(series[0]["points"][0]["t"], series[0]["points"][1]["t"])
+        self.assertEqual(series[1]["points"][0], {**series[1]["points"][0], "battery": None, "temperature": 31.5})
+
+
 class BotEndToEndTest(QuietTestCase):
     """Runs main() itself with the radio and the model replaced by fakes."""
 
@@ -678,6 +801,7 @@ class BotEndToEndTest(QuietTestCase):
             mock.patch.object(bot_meshcore, "MESHCORE_BLE", ""),
             mock.patch.object(bot_meshcore, "MESHCORE_MAP_UPLOAD", False),
             mock.patch.object(bot_meshcore, "MESHCORE_MQTT_OBSERVER", False),
+            mock.patch.object(bot_meshcore, "STATUS_PORT", 0),
             mock.patch.object(bot_meshcore, "MESHCORE_CHANNELS", ["bot-il"]),
             mock.patch.object(bot_meshcore, "PART_DELAY_SECONDS", 0),
             mock.patch.object(bot_meshcore, "probe_forever", lambda meshcore: asyncio.sleep(3600)),

@@ -21,6 +21,7 @@ An AI assistant for LoRa mesh networks. It listens on a MeshCore (or Meshtastic)
 | `bot_meshcore.py` | MeshCore entry point |
 | `repeater_telemetry.py` | Periodic repeater status/telemetry probe, CSV logging |
 | `map_upload.py` | Signed advert uploads to map.meshcore.io |
+| `status_server.py`, `templates/`, `static/` | Flask status page (one tab per section, repeater graphs) and JSON API |
 | `mqtt_observer.py` | MeshMapper MQTT observer (packets and status) |
 | `bot_meshtastic.py` | Meshtastic entry point |
 | `bot.py` | System prompt, model calls, reply splitting |
@@ -33,7 +34,7 @@ An AI assistant for LoRa mesh networks. It listens on a MeshCore (or Meshtastic)
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install meshcore meshtastic ollama pyserial paho-mqtt
+.venv/bin/pip install meshcore meshtastic ollama pyserial paho-mqtt flask
 cp config.example.json config.json
 ```
 
@@ -52,6 +53,7 @@ All settings live in `config.json`, which is git-ignored because it can hold a p
 | `meshcore_repeater_password` | Guest or admin password used to log in to repeaters before probing |
 | `meshcore_probe_repeaters` | Repeater names (or parts) to probe; empty means every known repeater |
 | `meshcore_probe_interval_seconds`, `meshcore_probe_file` | Probe period (default 3600) and output file |
+| `status_port`, `status_host` | Status page at `http://<host>:<port>/`, with repeater battery/voltage/temperature graphs at `/graphs` (JSON at `/api/status`, `/api/telemetry`); 0 turns it off. It has no login, so keep it on your LAN |
 | `meshtastic_port` / `meshtastic_ble` | Meshtastic radio connection |
 | `max_message_bytes`, `max_reply_parts`, `part_delay_seconds` | Reply size and pacing |
 | `bot_language`, `bot_mentions`, `error_reply` | Language, mention words, fallback reply |

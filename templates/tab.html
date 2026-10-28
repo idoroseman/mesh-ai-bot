@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block head %}<meta http-equiv="refresh" content="30">{% endblock %}
+{% block subtitle %}Updated {{ generated }} · refreshes every 30s{% endblock %}
+
+{% block content %}
+<section>
+{% if tab == "bot" %}
+  <div class="tiles">
+    <div class="tile"><span>Radio</span><b class="{{ 'ok' if health.radio_connected else 'bad' }}">{{ "connected" if health.radio_connected else "disconnected" }}</b></div>
+    <div class="tile"><span>Uptime</span><b>{{ health.bot_uptime }}</b></div>
+    <div class="tile"><span>Model</span><b>{{ health.model }}</b></div>
+    <div class="tile"><span>Contacts</span><b>{{ health.contacts }}</b></div>
+    {% for key, value in (health.counters or {}).items() %}
+    <div class="tile"><span>{{ key.replace("_", " ") }}</span><b>{{ value }}</b></div>
+    {% endfor %}
+  </div>
+  {% if health.error %}<p class="bad">Could not read the radio: {{ health.error }}</p>{% endif %}
+
+{% elif tab == "radio" %}
+  {% if health.radio %}
+  <table>
+    {% for key, value in health.radio.items() %}<tr><th>{{ key }}</th><td>{{ value }}</td></tr>{% endfor %}
+    {% for group in ("firmware", "core", "signal", "packets") if health[group] %}
+      {% for key, value in health[group].items() %}<tr><th>{{ group }} {{ key }}</th><td>{{ value }}</td></tr>{% endfor %}
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="bad">Could not read the radio{% if health.error %}: {{ health.error }}{% endif %}</p>
+  {% endif %}
+
+{% elif tab == "events" %}
+  {% if events %}<ul>{% for event in events %}<li>{{ event }}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">Nothing yet.</p>{% endif %}
+
+{% elif rows is mapping %}
+  <table>{% for key, value in rows.items() %}<tr><th>{{ key }}</th><td>{{ value }}</td></tr>{% endfor %}</table>
+
+{% else %}
+  <table>
+    <tr>{% for column in rows[0] %}<th>{{ column }}</th>{% endfor %}</tr>
+    {% for row in rows %}<tr>{% for column in rows[0] %}<td>{{ row.get(column, "") }}</td>{% endfor %}</tr>{% endfor %}
+  </table>
+{% endif %}
+</section>
+{% endblock %}

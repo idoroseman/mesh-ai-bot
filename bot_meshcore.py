@@ -9,7 +9,8 @@ from bot import BOT_MENTIONS, MODEL_NAME, byte_len, generate_bot_reply
 from config import CONFIG
 from map_upload import create_map_uploader
 from mqtt_observer import create_mqtt_observer
-from repeater_telemetry import probe_forever
+from repeater_telemetry import history, latest_rows, probe_forever
+from status_server import STATUS_PORT, StatusServer
 from tools_meshcore import MeshCoreTools
 
 # All settings live in config.json
@@ -216,6 +217,22 @@ async def main() -> int:
     ]
 
     probe_task = asyncio.create_task(probe_forever(meshcore))
+
+    def status_extra() -> Dict[str, Any]:
+        extra: Dict[str, Any] = {"repeaters": latest_rows()}
+        if mqtt_observer:
+            extra["mqtt_observer"] = {
+                "connected": mqtt_observer.client.is_connected(),
+                "topic": mqtt_observer.packets_topic,
+                "packets_published": mqtt_observer.published,
+            }
+        if map_uploader:
+            extra["map_upload"] = {"nodes_uploaded": len(map_uploader.seen)}
+        return extra
+
+    status_server = StatusServer(tools, asyncio.get_running_loop(), status_extra, history, bot_name) if STATUS_PORT else None
+    if status_server:
+        status_server.start()
     if map_uploader:
         subscriptions.append(meshcore.subscribe(EventType.RX_LOG_DATA, upload_to_map))
     if mqtt_observer:
@@ -228,6 +245,8 @@ async def main() -> int:
             await asyncio.sleep(3600)
     finally:
         probe_task.cancel()
+        if status_server:
+            status_server.stop()
         if mqtt_observer:
             mqtt_observer.stop()
         for subscription in subscriptions:

@@ -97,3 +97,65 @@ async def probe_forever(meshcore: MeshCore) -> None:
         except Exception as exc:
             print(f"Repeater probe failed: {exc!r}")
         await asyncio.sleep(PROBE_INTERVAL_SECONDS)
+
+
+# The CSV columns the status page shows, with their headings
+SUMMARY_COLUMNS = {
+    "repeater": "repeater",
+    "time": "probed",
+    "status_bat": "battery mV",
+    "telemetry_voltage_1": "voltage",
+    "telemetry_temperature_1": "temp °C",
+    "status_noise_floor": "noise floor",
+    "status_last_rssi": "last RSSI",
+    "status_last_snr": "last SNR",
+    "status_uptime": "uptime s",
+    "status_tx_queue_len": "tx queue",
+    "error": "error",
+}
+
+
+def latest_rows(path: str = PROBE_FILE) -> List[Dict[str, Any]]:
+    """The newest probe of each repeater, cut down to SUMMARY_COLUMNS."""
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            latest = {row.get("repeater", ""): row for row in csv.DictReader(f)}
+    except FileNotFoundError:
+        return []
+    return [
+        {heading: row.get(column) or "" for column, heading in SUMMARY_COLUMNS.items()}
+        for _, row in sorted(latest.items())
+    ]
+
+
+# The CSV columns the graphs plot
+HISTORY_COLUMNS = {
+    "battery": "status_bat",
+    "voltage": "telemetry_voltage_1",
+    "temperature": "telemetry_temperature_1",
+}
+
+
+def number(value: str | None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def history(path: str = PROBE_FILE) -> List[Dict[str, Any]]:
+    """Every probe that has a battery, voltage or temperature reading, grouped by repeater, oldest first."""
+    series: Dict[str, List[Dict[str, Any]]] = {}
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                try:
+                    when = time.mktime(time.strptime(row.get("time", ""), "%Y-%m-%dT%H:%M:%S"))
+                except ValueError:
+                    continue
+                values = {key: number(row.get(column)) for key, column in HISTORY_COLUMNS.items()}
+                if any(v is not None for v in values.values()):
+                    series.setdefault(row.get("repeater", ""), []).append({"t": int(when * 1000), **values})
+    except FileNotFoundError:
+        return []
+    return [{"name": name, "points": sorted(points, key=lambda p: p["t"])} for name, points in sorted(series.items())]

@@ -151,7 +151,7 @@ class MqttObserver:
         self.client.loop_stop()
 
     def handle_packet(self, log: Dict[str, Any]) -> bool:
-        print(f"Sending packet to mqtt {self.published}")
+        #print(f"Sending packet to mqtt {self.published}")
         """Publish one RX_LOG_DATA payload; returns whether it was handed to the client."""
         message = packet_message(log, self.origin, self.public_key)
         if message is None or not self.client.is_connected():

@@ -14,6 +14,9 @@
   "meshcore_probe_interval_seconds": 3600,
   "meshcore_probe_file": "repeater_telemetry.jsonl",
 
+  "status_port": 8080,
+  "status_host": "0.0.0.0",
+
   "meshtastic_port": "/dev/ttyUSB0",
   "meshtastic_ble": "",
 

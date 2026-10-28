@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block subtitle %}Repeater battery, voltage and temperature from the probe log{% endblock %}
+
+{% block content %}
+<section class="filters" aria-label="Filters">
+  <div class="segmented" id="range" role="group" aria-label="Time range">
+    <button type="button" data-days="1">24h</button>
+    <button type="button" data-days="7">7 days</button>
+    <button type="button" data-days="30">30 days</button>
+    <button type="button" data-days="0">All</button>
+  </div>
+  <div class="chips" id="repeaters" role="group" aria-label="Repeaters"></div>
+</section>
+
+<section class="chart" id="chart-battery"><h2>Battery (mV)</h2></section>
+<section class="chart" id="chart-voltage"><h2>Voltage (V)</h2></section>
+<section class="chart" id="chart-temperature"><h2>Temperature (°C)</h2></section>
+
+<section>
+  <details id="table-view">
+    <summary>Show the readings as a table</summary>
+    <table><thead><tr><th>time</th><th>repeater</th><th>battery mV</th><th>voltage V</th><th>temp °C</th></tr></thead><tbody></tbody></table>
+  </details>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='graphs.js') }}" data-source="{{ url_for('api_telemetry') }}"></script>
+{% endblock %}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% block head %}{% endblock %}
+<title>{{ name or "Mesh bot" }} · {{ tab.replace("_", " ") }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='status.css') }}">
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{ name or "Mesh bot" }}</h1>
+    <div class="muted">{% block subtitle %}Updated {{ generated }}{% endblock %} · <a href="{{ url_for('api_status') }}">JSON</a></div>
+  </header>
+  {% set labels = {"mqtt_observer": "MQTT observer"} %}
+  <nav class="tabs" aria-label="Sections">
+    {% for item in tabs %}
+    <a href="{{ url_for('page', tab=item) }}"{% if item == tab %} aria-current="page"{% endif %}>{{ labels.get(item, item.replace("_", " ")|capitalize) }}</a>
+    {% endfor %}
+  </nav>
+  {% block content %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>
