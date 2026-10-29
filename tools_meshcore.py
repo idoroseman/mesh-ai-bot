@@ -12,6 +12,16 @@ from tools import CONTACT_TYPES, DEFAULT_MAX_CHANNELS, MAX_LISTED_CONTACTS, Mesh
 TOOL_TIMEOUT_SECONDS = 30
 
 
+def describe_contact(contact: Dict[str, Any], now: float) -> Dict[str, Any]:
+    hops = contact.get("out_path_len", -1)
+    return {
+        "name": contact.get("adv_name", ""),
+        "type": CONTACT_TYPES.get(contact.get("type"), "other"),
+        "hops": "unknown" if hops < 0 else hops,
+        "heard": format_age(now - contact["last_advert"]) + " ago" if contact.get("last_advert") else "never",
+    }
+
+
 class MeshCoreTools(MeshTools):
     """Live mesh data the model can look up to answer questions about the network and the bot."""
 
@@ -44,6 +54,14 @@ class MeshCoreTools(MeshTools):
             details["sent_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sent))
         return details
 
+    def heard_contacts(self) -> List[Dict[str, Any]]:
+        """The contacts the radio has heard an advert from, most recent first, without asking the radio."""
+        # Copied in one step: the status page reads this from its own thread while the radio adds contacts
+        heard = [c for c in list(self.meshcore.contacts.values()) if c.get("last_advert")]
+        heard.sort(key=lambda c: c["last_advert"], reverse=True)
+        now = time.time()
+        return [describe_contact(c, now) for c in heard]
+
     async def list_contacts(self, query: str = "", kind: str = "") -> Dict[str, Any]:
         await self.meshcore.ensure_contacts(follow=True)
         contacts = list(self.meshcore.contacts.values())
@@ -63,13 +81,7 @@ class MeshCoreTools(MeshTools):
         now = time.time()
         shown = []
         for c in matches[:MAX_LISTED_CONTACTS]:
-            hops = c.get("out_path_len", -1)
-            entry = {
-                "name": c.get("adv_name", ""),
-                "type": type_name(c),
-                "hops": "unknown" if hops < 0 else hops,
-                "heard": format_age(now - c["last_advert"]) + " ago" if c.get("last_advert") else "never",
-            }
+            entry = describe_contact(c, now)
             if c.get("adv_lat") or c.get("adv_lon"):
                 entry["location"] = [round(c["adv_lat"], 4), round(c["adv_lon"], 4)]
             shown.append(entry)

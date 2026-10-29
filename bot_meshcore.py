@@ -219,7 +219,7 @@ async def main() -> int:
     probe_task = asyncio.create_task(probe_forever(meshcore))
 
     def status_extra() -> Dict[str, Any]:
-        extra: Dict[str, Any] = {"repeaters": latest_rows()}
+        extra: Dict[str, Any] = {"repeaters": latest_rows(), "contacts": tools.heard_contacts()}
         if mqtt_observer:
             extra["mqtt_observer"] = {
                 "connected": mqtt_observer.client.is_connected(),

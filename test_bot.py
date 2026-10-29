@@ -707,6 +707,14 @@ class StatusServerTest(QuietTestCase):
         self.assertIn("Carmel RPT", await self.text("/repeaters"))
         self.assertIn('aria-current="page">Events', await self.text("/events"))
 
+    async def test_contacts_tab_lists_heard_contacts(self):
+        self.extra["contacts"] = self.tools.heard_contacts()
+        self.assertEqual(self.extra["contacts"], [{"name": "4X1ABC", "type": "companion", "hops": 2, "heard": "5m ago"}])
+        page = await self.text("/contacts")
+        self.assertIn("4X1ABC", page)
+        # Never heard from, so not listed
+        self.assertNotIn("Carmel RPT", page)
+
     async def test_events_tab_does_not_ask_the_radio(self):
         async def broken():
             raise AssertionError("radio queried")
