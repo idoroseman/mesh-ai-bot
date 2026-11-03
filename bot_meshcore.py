@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable, Dict, List
 
 from meshcore import EventType, MeshCore
 
-from bot import BOT_MENTIONS, MODEL_NAME, byte_len, generate_bot_reply
+from bot import BOT_MENTIONS, MODEL_NAME, byte_len, count_sent, generate_bot_reply
 from config import CONFIG
 from map_upload import create_map_uploader
 from mqtt_observer import create_mqtt_observer
@@ -61,7 +61,7 @@ def should_answer(text: str, channel_name: str, is_dm: bool, bot_name: str = "")
     return any(token in lowered for token in BOT_MENTIONS)
 
 
-async def send_reply(send: Callable[[str], Awaitable[Any]], parts: List[str]) -> None:
+async def send_reply(send: Callable[[str], Awaitable[Any]], parts: List[str], tools: Any) -> None:
     for idx, part in enumerate(parts):
         if idx:
             await asyncio.sleep(PART_DELAY_SECONDS)
@@ -70,6 +70,7 @@ async def send_reply(send: Callable[[str], Awaitable[Any]], parts: List[str]) ->
         if result.type == EventType.ERROR:
             print(f"Error sending reply: {result.payload}")
             return
+        count_sent(parts, tools)
 
 
 async def connect() -> MeshCore | None:
@@ -138,7 +139,7 @@ async def main() -> int:
         metadata = {**msg, "user": sender, "channel": channel or str(chan)}
         async with reply_lock:
             reply = await asyncio.to_thread(generate_bot_reply, text, metadata, max_bytes, MAX_REPLY_PARTS, tools)
-            await send_reply(lambda part: meshcore.commands.send_chan_msg(chan, prefix + part), reply)
+            await send_reply(lambda part: meshcore.commands.send_chan_msg(chan, prefix + part), reply, tools)
             tools.counters["replies_sent"] += 1
 
     async def answer_contact_message(msg: Dict[str, Any]) -> None:
@@ -163,7 +164,7 @@ async def main() -> int:
         metadata = {**msg, "user": sender, "channel": "direct"}
         async with reply_lock:
             reply = await asyncio.to_thread(generate_bot_reply, text, metadata, MAX_MESSAGE_BYTES, MAX_REPLY_PARTS, tools)
-            await send_reply(lambda part: meshcore.commands.send_msg(contact or prefix, part), reply)
+            await send_reply(lambda part: meshcore.commands.send_msg(contact or prefix, part), reply, tools)
             tools.counters["replies_sent"] += 1
 
     async def upload_to_map(event) -> None:

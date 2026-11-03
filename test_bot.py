@@ -9,6 +9,7 @@ import os
 import tempfile
 import time
 import unittest
+from collections import Counter
 from types import SimpleNamespace
 from unittest import mock
 
@@ -509,8 +510,10 @@ class SendReplyTest(QuietTestCase):
             sent.append(part)
             return ok()
 
-        await bot_meshcore.send_reply(send, ["one", "two", "three"])
+        counted = SimpleNamespace(counters=Counter())
+        await bot_meshcore.send_reply(send, ["one", "two", "three"], counted)
         self.assertEqual(sent, ["one", "two", "three"])
+        self.assertEqual(counted.counters, {"messages_sent": 3})
 
     async def test_stops_on_send_error(self):
         sent = []
@@ -519,8 +522,10 @@ class SendReplyTest(QuietTestCase):
             sent.append(part)
             return error()
 
-        await bot_meshcore.send_reply(send, ["one", "two", "three"])
+        counted = SimpleNamespace(counters=Counter())
+        await bot_meshcore.send_reply(send, ["one", "two", "three"], counted)
         self.assertEqual(sent, ["one"])
+        self.assertEqual(counted.counters, {})
 
 
 class MapUploadTest(unittest.IsolatedAsyncioTestCase):
@@ -916,12 +921,21 @@ class BotEndToEndTest(QuietTestCase):
         health = self.model.requests[-1]["messages"][-1]["content"]
         self.assertIn('"messages_received":2', health)
         self.assertIn('"replies_sent":1', health)
+        self.assertIn('"messages_sent":1', health)
+        self.assertNotIn("error_messages_sent", health)
 
     async def test_model_failure_sends_the_error_reply(self):
         self.model.script = [RuntimeError("down")]
         await self.mesh.emit(EventType.CONTACT_MSG_RECV, {"pubkey_prefix": KEY_A[:12], "text": "hi", "txt_type": 0})
         await self.wait_for(lambda: self.mesh.commands.direct_messages)
         self.assertEqual(self.mesh.commands.direct_messages[0][1], bot.ERROR_REPLY)
+
+        self.model.script = [tool_request("bot_health"), answer("ok")]
+        await self.mesh.emit(EventType.CHANNEL_MSG_RECV, {"channel_idx": 1, "text": "4X1ABC: status?"})
+        await self.wait_for(lambda: self.mesh.commands.channel_messages)
+        health = self.model.requests[-1]["messages"][-1]["content"]
+        self.assertIn('"messages_sent":1', health)
+        self.assertIn('"error_messages_sent":1', health)
 
 
 BOT_NUM = 0xE9D66B4E
@@ -1107,6 +1121,8 @@ class MeshtasticEndToEndTest(QuietTestCase):
         self.receive(text_packet("hi", to=BOT_NUM))
         self.assertEqual(self.radio.sent, [(USER_NUM, 0, bot.ERROR_REPLY)])
         self.assertEqual(self.tools.counters["model_errors"], 1)
+        self.assertEqual(self.tools.counters["messages_sent"], 1)
+        self.assertEqual(self.tools.counters["error_messages_sent"], 1)
 
     def test_network_events_and_counters_reach_the_model(self):
         self.receive(node_info_packet(2, "Carmel RPT", "CRM", role="ROUTER"))
@@ -1132,6 +1148,8 @@ class MeshtasticEndToEndTest(QuietTestCase):
         health = self.model.requests[-1]["messages"][-1]["content"]
         self.assertIn('"messages_received":2', health)
         self.assertIn('"replies_sent":1', health)
+        self.assertIn('"messages_sent":1', health)
+        self.assertNotIn("error_messages_sent", health)
 
 
 class MeshtasticConnectTest(QuietTestCase):

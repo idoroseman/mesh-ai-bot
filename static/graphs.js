@@ -7,7 +7,7 @@
     { key: "temperature", label: "Temperature", unit: "°C", digits: 1 },
   ];
   const SLOTS = 8; // categorical palette size; more repeaters than this cannot be shown at once
-  const DEFAULT_SELECTED = 3;
+  const DEFAULT_SELECTED = 1;
   const DIRECT_LABEL_LIMIT = 4;
   const DOT_LIMIT = 40; // draw markers when a line has this few points in range
   const TABLE_LIMIT = 300;

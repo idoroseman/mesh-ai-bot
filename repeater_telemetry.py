@@ -90,9 +90,10 @@ async def probe_forever(meshcore: MeshCore) -> None:
     """Append one CSV row per repeater to PROBE_FILE every PROBE_INTERVAL_SECONDS."""
     while True:
         try:
+            print("Probing repeaters...")
             for contact in select_repeaters(meshcore.contacts, PROBE_REPEATERS):
                 record = await probe_repeater(meshcore, contact)
-                print(f"Probed repeater {record['repeater']}: {record.get('error', 'ok')}")
+                #print(f"Probed repeater {record['repeater']}: {record.get('error', 'ok')}")
                 write_probe_row(PROBE_FILE, record)
         except Exception as exc:
             print(f"Repeater probe failed: {exc!r}")

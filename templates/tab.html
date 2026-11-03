@@ -10,7 +10,7 @@
     <div class="tile"><span>Radio</span><b class="{{ 'ok' if health.radio_connected else 'bad' }}">{{ "connected" if health.radio_connected else "disconnected" }}</b></div>
     <div class="tile"><span>Uptime</span><b>{{ health.bot_uptime }}</b></div>
     <div class="tile"><span>Model</span><b>{{ health.model }}</b></div>
-    <div class="tile"><span>Contacts</span><b>{{ health.contacts }}</b></div>
+    <!-- <div class="tile"><span>Contacts</span><b>{{ health.contacts }}</b></div> -->
     {% for key, value in (health.counters or {}).items() %}
     <div class="tile"><span>{{ key.replace("_", " ") }}</span><b>{{ value }}</b></div>
     {% endfor %}
@@ -37,10 +37,12 @@
   <table>{% for key, value in rows.items() %}<tr><th>{{ key }}</th><td>{{ value }}</td></tr>{% endfor %}</table>
 
 {% else %}
+  <p>{{ rows|length }} items</p>
   <table>
     <tr>{% for column in rows[0] %}<th>{{ column }}</th>{% endfor %}</tr>
     {% for row in rows %}<tr>{% for column in rows[0] %}<td>{{ row.get(column, "") }}</td>{% endfor %}</tr>{% endfor %}
   </table>
+  {% if not rows %}<p class="muted">No data available.</p>{% endif %}
 {% endif %}
 </section>
 {% endblock %}

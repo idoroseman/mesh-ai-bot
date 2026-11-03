@@ -8,7 +8,7 @@ from meshtastic.mesh_interface import MeshInterface
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from pubsub import pub
 
-from bot import BOT_MENTIONS, MODEL_NAME, generate_bot_reply
+from bot import BOT_MENTIONS, MODEL_NAME, count_sent, generate_bot_reply
 from config import CONFIG
 from tools_meshtastic import MeshtasticTools, node_id_of
 
@@ -70,6 +70,7 @@ def on_receive_packet(packet: Dict[str, Any], interface: MeshInterface) -> None:
                 interface.sendText(text=part, destinationId=packet["from"])
             else:
                 interface.sendText(text=mention + part, channelIndex=channel)
+            count_sent(reply, tools)
         tools.counters["replies_sent"] += 1
     except Exception as exc:
         print(f"❌ Error processing packet: {exc!r}")

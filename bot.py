@@ -93,6 +93,13 @@ def split_for_mesh(text: str, max_bytes: int, max_parts: int) -> List[str]:
     return parts
 
 
+def count_sent(parts: List[str], tools: Any) -> None:
+    """Count one mesh message sent from a reply; parts is the whole reply, which tells if it is the error reply."""
+    tools.counters["messages_sent"] += 1
+    if " ".join(parts) == normalize_text(ERROR_REPLY):
+        tools.counters["error_messages_sent"] += 1
+
+
 def chat_with_tools(messages: List[Any], tools: Any, metadata: Dict[str, Any]) -> str:
     """Let the model look up live mesh data through tool calls before it writes the reply."""
     if tools.model_supports_tools:
